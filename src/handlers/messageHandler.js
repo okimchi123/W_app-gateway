@@ -1,6 +1,12 @@
 const axios = require('axios');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
+const MEDIA_TYPES = {
+  imageMessage: 'image',
+  videoMessage: 'video',
+  documentMessage: 'document',
+};
+
 function resolvePhoneNumber(msg) {
   const remoteJid = msg.key.remoteJid;
 
@@ -54,7 +60,16 @@ async function handleMessage(customerId, { messages, type }, socket) {
     // DEBUG: log JID resolution
     console.log(`[${customerId}] DEBUG remoteJid: ${msg.key.remoteJid}, remoteJidAlt: ${msg.key.remoteJidAlt || 'none'}`);
 
-    const imageMessage = msg.message?.imageMessage;
+    // Detect media type (image, video, or document)
+    let mediaMsg = null;
+    let messageType = 'text';
+    for (const [key, type] of Object.entries(MEDIA_TYPES)) {
+      if (msg.message?.[key]) {
+        mediaMsg = msg.message[key];
+        messageType = type;
+        break;
+      }
+    }
 
     const text = msg.message?.conversation
       || msg.message?.extendedTextMessage?.text
@@ -63,11 +78,11 @@ async function handleMessage(customerId, { messages, type }, socket) {
       || msg.message?.templateButtonReplyMessage?.selectedDisplayText
       || msg.message?.nativeFlowResponseMessage?.params
       || msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.params
-      || imageMessage?.caption
+      || mediaMsg?.caption
       || null;
 
-    // Skip messages with no text and no image
-    if (!text && !imageMessage) continue;
+    // Skip messages with no text and no media
+    if (!text && !mediaMsg) continue;
 
     const direction = msg.key.fromMe ? 'outgoing' : 'incoming';
 
@@ -81,12 +96,12 @@ async function handleMessage(customerId, { messages, type }, socket) {
       ...(isGroup && { participant: msg.key.participant?.replace(/@.+$/, '') || null }),
       pushName: msg.pushName || null,
       message: text || '',
-      messageType: imageMessage ? 'image' : 'text',
+      messageType,
       timestamp: msg.messageTimestamp,
     };
 
     // Download image and attach as base64 (no disk storage)
-    if (imageMessage) {
+    if (messageType === 'image') {
       try {
         const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
           logger: undefined,
@@ -94,13 +109,33 @@ async function handleMessage(customerId, { messages, type }, socket) {
         });
         payload.image = {
           base64: buffer.toString('base64'),
-          mimetype: imageMessage.mimetype || 'image/jpeg',
-          caption: imageMessage.caption || null,
+          mimetype: mediaMsg.mimetype || 'image/jpeg',
+          caption: mediaMsg.caption || null,
         };
       } catch (err) {
         console.error(`[${customerId}] Failed to download image: ${err.message}`);
         payload.image = null;
         payload.imageError = 'Failed to download image';
+      }
+    }
+
+    // Download video/document and attach as base64
+    if (messageType === 'video' || messageType === 'document') {
+      try {
+        const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+          logger: undefined,
+          reuploadRequest: socket.updateMediaMessage,
+        });
+        payload.media = {
+          base64: buffer.toString('base64'),
+          mimetype: mediaMsg.mimetype || 'application/octet-stream',
+          caption: mediaMsg.caption || null,
+          fileName: mediaMsg.fileName || null,
+        };
+      } catch (err) {
+        console.error(`[${customerId}] Failed to download ${messageType}: ${err.message}`);
+        payload.media = null;
+        payload.mediaError = `Failed to download ${messageType}`;
       }
     }
 

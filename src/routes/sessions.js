@@ -14,7 +14,13 @@ const {
 } = require('@whiskeysockets/baileys');
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 * 1024 } });
+
+function getMediaKey(mimetype) {
+  if (mimetype.startsWith('image/')) return 'image';
+  if (mimetype.startsWith('video/')) return 'video';
+  return 'document';
+}
 
 // POST /session/start/:customerId
 router.post('/session/start/:customerId', async (req, res) => {
@@ -88,12 +94,17 @@ router.post('/session/send-file/:customerId', upload.single('file'), async (req,
       return res.status(400).json({ error: `Session not connected (status: ${session.status})` });
     }
 
-    await session.socket.sendMessage(jid, {
-      image: req.file.buffer,
+    const mediaKey = getMediaKey(req.file.mimetype);
+    const messagePayload = {
+      [mediaKey]: req.file.buffer,
       mimetype: req.file.mimetype,
-      fileName: fileName || req.file.originalname,
       caption: caption || undefined,
-    });
+    };
+    if (mediaKey === 'document') {
+      messagePayload.fileName = fileName || req.file.originalname;
+    }
+
+    await session.socket.sendMessage(jid, messagePayload);
 
     res.json({ status: 'sent' });
   } catch (err) {
