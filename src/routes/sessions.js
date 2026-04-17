@@ -12,6 +12,11 @@ const {
   isJidGroup,
   generateMessageIDV2,
 } = require('@whiskeysockets/baileys');
+const { markOutgoing } = require('../utils/outgoingSourceTracker');
+
+function getUserJid(socket) {
+  return socket?.authState?.creds?.me?.id || socket?.user?.id;
+}
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 * 1024 } });
@@ -50,7 +55,7 @@ router.get('/session/status/:customerId', (req, res) => {
 router.post('/session/send/:customerId', async (req, res) => {
   try {
     const { customerId } = req.params;
-    const { to, message } = req.body;
+    const { to, message, source } = req.body;
 
     if (!to || !message) {
       return res.status(400).json({ error: 'Missing "to" or "message" in body' });
@@ -66,7 +71,14 @@ router.post('/session/send/:customerId', async (req, res) => {
       return res.status(400).json({ error: `Session not connected (status: ${session.status})` });
     }
 
-    await session.socket.sendMessage(jid, { text: message });
+    const sendOptions = {};
+    if (source) {
+      const messageId = generateMessageIDV2(getUserJid(session.socket));
+      markOutgoing(messageId, source);
+      sendOptions.messageId = messageId;
+    }
+
+    await session.socket.sendMessage(jid, { text: message }, sendOptions);
     res.json({ status: 'sent' });
   } catch (err) {
     console.error(`[send] Error for ${req.params.customerId}:`, err.message);
@@ -78,7 +90,7 @@ router.post('/session/send/:customerId', async (req, res) => {
 router.post('/session/send-file/:customerId', upload.single('file'), async (req, res) => {
   try {
     const { customerId } = req.params;
-    const { chatId, fileName, caption } = req.body;
+    const { chatId, fileName, caption, source } = req.body;
 
     if (!chatId || !req.file) {
       return res.status(400).json({ error: 'Missing "chatId" or "file" in form data' });
@@ -104,7 +116,14 @@ router.post('/session/send-file/:customerId', upload.single('file'), async (req,
       messagePayload.fileName = fileName || req.file.originalname;
     }
 
-    await session.socket.sendMessage(jid, messagePayload);
+    const sendOptions = {};
+    if (source) {
+      const messageId = generateMessageIDV2(getUserJid(session.socket));
+      markOutgoing(messageId, source);
+      sendOptions.messageId = messageId;
+    }
+
+    await session.socket.sendMessage(jid, messagePayload, sendOptions);
 
     res.json({ status: 'sent' });
   } catch (err) {
@@ -117,7 +136,7 @@ router.post('/session/send-file/:customerId', upload.single('file'), async (req,
 router.post('/session/send-buttons/:customerId', async (req, res) => {
   try {
     const { customerId } = req.params;
-    const { to, body, buttons, header, footer } = req.body;
+    const { to, body, buttons, header, footer, source } = req.body;
 
     if (!to || !body || !buttons || !Array.isArray(buttons) || buttons.length === 0) {
       return res.status(400).json({ error: 'Missing "to", "body", or "buttons" in body' });
@@ -179,6 +198,10 @@ router.post('/session/send-buttons/:customerId', async (req, res) => {
     ];
     if (!isJidGroup(jid)) {
       additionalNodes.push({ tag: 'bot', attrs: { biz_bot: '1' } });
+    }
+
+    if (source) {
+      markOutgoing(fullMsg.key.id, source);
     }
 
     await sock.relayMessage(jid, fullMsg.message, {

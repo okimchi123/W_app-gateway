@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { consumeSource } = require('../utils/outgoingSourceTracker');
 
 const MEDIA_TYPES = {
   imageMessage: 'image',
@@ -99,6 +100,11 @@ async function handleMessage(customerId, { messages, type }, socket) {
       messageType,
       timestamp: msg.messageTimestamp,
     };
+
+    if (direction === 'outgoing') {
+      const source = consumeSource(msg.key.id);
+      if (source) payload.source = source;
+    }
 
     // Download image and attach as base64 (no disk storage)
     if (messageType === 'image') {
