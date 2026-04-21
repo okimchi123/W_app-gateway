@@ -2,6 +2,13 @@ const path = require('path');
 const qrcode = require('qrcode');
 const pino = require('pino');
 const { handleMessage } = require('../handlers/messageHandler');
+const {
+  loadContacts,
+  markHistorySynced,
+  upsertContacts,
+  clearContacts,
+} = require('./contactStore');
+const { loadChats, recordHistorySyncMessages, clearChats } = require('./chatStore');
 
 const STORAGE_DIR = path.join(__dirname, '..', '..', 'storage');
 const logger = pino({ level: 'warn' });
@@ -32,6 +39,9 @@ async function startSession(customerId) {
   const authDir = path.join(STORAGE_DIR, customerId);
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
+  await loadContacts(customerId);
+  await loadChats(customerId);
+
   const { version } = await fetchLatestWaWebVersion();
   console.log(`[${customerId}] Using WA web version: ${version}`);
 
@@ -49,6 +59,19 @@ async function startSession(customerId) {
     let resolved = false;
 
     socket.ev.on('creds.update', saveCreds);
+
+    socket.ev.on('messaging-history.set', ({ contacts, messages }) => {
+      markHistorySynced(customerId, contacts || []);
+      recordHistorySyncMessages(customerId, messages || []);
+    });
+
+    socket.ev.on('contacts.upsert', (contacts) => {
+      upsertContacts(customerId, contacts);
+    });
+
+    socket.ev.on('contacts.update', (contacts) => {
+      upsertContacts(customerId, contacts);
+    });
 
     socket.ev.on('messages.upsert', (upsert) => {
       handleMessage(customerId, upsert, socket);
@@ -88,6 +111,8 @@ async function startSession(customerId) {
 
         if (loggedOut) {
           sessions.delete(customerId);
+          await clearContacts(customerId);
+          await clearChats(customerId);
           const fs = require('fs/promises');
           await fs.rm(authDir, { recursive: true, force: true }).catch(() => {});
           session.status = 'logged_out';
@@ -164,6 +189,8 @@ async function deleteSession(customerId) {
   }
 
   sessions.delete(customerId);
+  await clearContacts(customerId);
+  await clearChats(customerId);
 
   const fs = require('fs/promises');
   const authDir = path.join(STORAGE_DIR, customerId);

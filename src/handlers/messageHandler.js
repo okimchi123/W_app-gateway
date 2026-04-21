@@ -1,6 +1,10 @@
 const axios = require('axios');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { consumeSource } = require('../utils/outgoingSourceTracker');
+const { getSavedStatus } = require('../sessions/contactStore');
+const { isChatsSynced, hasPreCutoffChat } = require('../sessions/chatStore');
+
+const ELIRON_CUSTOMER_ID = '260222c1-9b83-4206-bb90-7445907fb582';
 
 const MEDIA_TYPES = {
   imageMessage: 'image',
@@ -100,6 +104,22 @@ async function handleMessage(customerId, { messages, type }, socket) {
       messageType,
       timestamp: msg.messageTimestamp,
     };
+
+    if (direction === 'incoming' && !isGroup) {
+      // null => cache not hydrated yet; omit so downstream's missing=unsafe fail-safe applies
+      const saved = getSavedStatus(customerId, msg.key.remoteJid, msg.key.remoteJidAlt);
+      if (saved !== null) payload.isSavedContact = saved;
+
+      if (customerId === ELIRON_CUSTOMER_ID) {
+        try {
+          if (isChatsSynced(customerId)) {
+            payload.hasChatHistory = hasPreCutoffChat(customerId, msg.key.remoteJid, msg.key.remoteJidAlt);
+          }
+        } catch (err) {
+          console.error(`[${customerId}] [hasChatHistory] compute failed:`, err.message);
+        }
+      }
+    }
 
     if (direction === 'outgoing') {
       const source = consumeSource(msg.key.id);
