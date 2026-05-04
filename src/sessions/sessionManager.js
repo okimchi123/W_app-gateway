@@ -2,12 +2,6 @@ const path = require('path');
 const qrcode = require('qrcode');
 const pino = require('pino');
 const { handleMessage } = require('../handlers/messageHandler');
-const {
-  loadContacts,
-  markHistorySynced,
-  upsertContacts,
-  clearContacts,
-} = require('./contactStore');
 const { loadChats, recordHistorySyncMessages, clearChats } = require('./chatStore');
 
 const STORAGE_DIR = path.join(__dirname, '..', '..', 'storage');
@@ -39,7 +33,6 @@ async function startSession(customerId) {
   const authDir = path.join(STORAGE_DIR, customerId);
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
-  await loadContacts(customerId);
   await loadChats(customerId);
 
   const { version } = await fetchLatestWaWebVersion();
@@ -60,17 +53,8 @@ async function startSession(customerId) {
 
     socket.ev.on('creds.update', saveCreds);
 
-    socket.ev.on('messaging-history.set', ({ contacts, messages }) => {
-      markHistorySynced(customerId, contacts || []);
+    socket.ev.on('messaging-history.set', ({ messages }) => {
       recordHistorySyncMessages(customerId, messages || []);
-    });
-
-    socket.ev.on('contacts.upsert', (contacts) => {
-      upsertContacts(customerId, contacts);
-    });
-
-    socket.ev.on('contacts.update', (contacts) => {
-      upsertContacts(customerId, contacts);
     });
 
     socket.ev.on('messages.upsert', (upsert) => {
@@ -111,7 +95,6 @@ async function startSession(customerId) {
 
         if (loggedOut) {
           sessions.delete(customerId);
-          await clearContacts(customerId);
           await clearChats(customerId);
           const fs = require('fs/promises');
           await fs.rm(authDir, { recursive: true, force: true }).catch(() => {});
@@ -189,7 +172,6 @@ async function deleteSession(customerId) {
   }
 
   sessions.delete(customerId);
-  await clearContacts(customerId);
   await clearChats(customerId);
 
   const fs = require('fs/promises');
