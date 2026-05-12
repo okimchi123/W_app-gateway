@@ -2,7 +2,7 @@ const fs = require('fs/promises');
 const path = require('path');
 
 const ELIRON_CUSTOMER_ID = '260222c1-9b83-4206-bb90-7445907fb582';
-const CHAT_HISTORY_CUTOFF_TS = Math.floor(new Date('2026-05-11T00:00:00+03:00').getTime() / 1000);
+const CHAT_HISTORY_CUTOFF_TS = Math.floor(new Date('2026-05-13T00:00:00+03:00').getTime() / 1000);
 
 const STORAGE_DIR = path.join(__dirname, '..', '..', 'storage');
 const DEBOUNCE_MS = 2000;
