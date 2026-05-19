@@ -1,8 +1,14 @@
 const fs = require('fs/promises');
 const path = require('path');
 
-const ELIRON_CUSTOMER_ID = '260222c1-9b83-4206-bb90-7445907fb582';
-const CHAT_HISTORY_CUTOFF_TS = Math.floor(new Date('2026-05-19T00:00:00+03:00').getTime() / 1000);
+// Per-customer cutoff for hasChatHistory. Add a customer here to enable the feature for them.
+// Value is a UNIX timestamp (seconds). Customer must re-pair after a date change so chats.json rebuilds.
+const CHAT_HISTORY_CUTOFFS = {
+  // Eliron
+  '260222c1-9b83-4206-bb90-7445907fb582': Math.floor(new Date('2026-05-19T00:00:00+03:00').getTime() / 1000),
+  // Limor
+  '4b0e1f37-d55b-41d1-8a33-4f4e6b70781f': Math.floor(new Date('2026-05-15T00:00:00+03:00').getTime() / 1000),
+};
 
 const STORAGE_DIR = path.join(__dirname, '..', '..', 'storage');
 const DEBOUNCE_MS = 2000;
@@ -60,8 +66,13 @@ async function loadChats(customerId) {
   }
 }
 
+function isCutoffEnabled(customerId) {
+  return Object.prototype.hasOwnProperty.call(CHAT_HISTORY_CUTOFFS, customerId);
+}
+
 function recordHistorySyncMessages(customerId, messages) {
-  if (customerId !== ELIRON_CUSTOMER_ID) return;
+  const cutoff = CHAT_HISTORY_CUTOFFS[customerId];
+  if (!cutoff) return;
   if (!messages?.length) return;
   const store = getStore(customerId);
   let changed = false;
@@ -69,7 +80,7 @@ function recordHistorySyncMessages(customerId, messages) {
     const jid = msg?.key?.remoteJid;
     if (!jid) continue;
     const ts = Number(msg.messageTimestamp);
-    if (!Number.isFinite(ts) || ts <= 0 || ts >= CHAT_HISTORY_CUTOFF_TS) continue;
+    if (!Number.isFinite(ts) || ts <= 0 || ts >= cutoff) continue;
     if (store.jids.has(jid)) continue;
     store.jids.add(jid);
     changed = true;
@@ -106,6 +117,7 @@ async function clearChats(customerId) {
 module.exports = {
   loadChats,
   recordHistorySyncMessages,
+  isCutoffEnabled,
   isChatsSynced,
   hasPreCutoffChat,
   clearChats,

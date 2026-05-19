@@ -1,9 +1,7 @@
 const axios = require('axios');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { consumeSource } = require('../utils/outgoingSourceTracker');
-const { isChatsSynced, hasPreCutoffChat } = require('../sessions/chatStore');
-
-const ELIRON_CUSTOMER_ID = '260222c1-9b83-4206-bb90-7445907fb582';
+const { isChatsSynced, hasPreCutoffChat, isCutoffEnabled } = require('../sessions/chatStore');
 
 const MEDIA_TYPES = {
   imageMessage: 'image',
@@ -105,7 +103,7 @@ async function handleMessage(customerId, { messages, type }, socket) {
     };
 
     if (direction === 'incoming' && !isGroup) {
-      if (customerId === ELIRON_CUSTOMER_ID) {
+      if (isCutoffEnabled(customerId)) {
         try {
           if (isChatsSynced(customerId)) {
             payload.hasChatHistory = hasPreCutoffChat(customerId, msg.key.remoteJid, msg.key.remoteJidAlt);
