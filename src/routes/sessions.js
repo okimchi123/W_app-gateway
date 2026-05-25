@@ -215,6 +215,106 @@ router.post('/session/send-buttons/:customerId', async (req, res) => {
   }
 });
 
+// POST /session/send-list/:customerId
+router.post('/session/send-list/:customerId', async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { to, body, buttonText, sections, header, footer, source } = req.body;
+
+    if (!to || !body || !buttonText || !sections || !Array.isArray(sections) || sections.length === 0) {
+      return res.status(400).json({ error: 'Missing "to", "body", "buttonText", or "sections" in body' });
+    }
+
+    if (sections.length > 10) {
+      return res.status(400).json({ error: 'Maximum 10 sections allowed' });
+    }
+
+    for (let i = 0; i < sections.length; i++) {
+      const section = sections[i];
+      if (!section || !section.title || !Array.isArray(section.rows) || section.rows.length === 0) {
+        return res.status(400).json({ error: `Section ${i} missing "title" or non-empty "rows"` });
+      }
+      if (section.rows.length > 10) {
+        return res.status(400).json({ error: `Section ${i} exceeds maximum 10 rows` });
+      }
+      for (let j = 0; j < section.rows.length; j++) {
+        const row = section.rows[j];
+        if (!row || !row.rowId || !row.title) {
+          return res.status(400).json({ error: `Section ${i} row ${j} missing "rowId" or "title"` });
+        }
+      }
+    }
+
+    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+
+    const session = getSession(customerId);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    if (session.status !== 'connected') {
+      return res.status(400).json({ error: `Session not connected (status: ${session.status})` });
+    }
+
+    const nativeButtons = [
+      {
+        name: 'single_select',
+        buttonParamsJson: JSON.stringify({
+          title: buttonText,
+          sections,
+        }),
+      },
+    ];
+
+    const content = {
+      interactiveMessage: {
+        nativeFlowMessage: { buttons: nativeButtons },
+        body: { text: body },
+        footer: footer ? { text: footer } : undefined,
+        header: header ? { title: header } : undefined,
+      },
+    };
+
+    const sock = session.socket;
+    const userJid = sock.authState?.creds?.me?.id || sock.user?.id;
+    const fullMsg = generateWAMessageFromContent(jid, content, {
+      userJid,
+      messageId: generateMessageIDV2(userJid),
+    });
+
+    normalizeMessageContent(fullMsg.message);
+    const additionalNodes = [
+      {
+        tag: 'biz',
+        attrs: {},
+        content: [{
+          tag: 'interactive',
+          attrs: { type: 'native_flow', v: '1' },
+          content: [{
+            tag: 'native_flow',
+            attrs: { v: '9', name: 'mixed' },
+          }],
+        }],
+      },
+    ];
+    if (!isJidGroup(jid)) {
+      additionalNodes.push({ tag: 'bot', attrs: { biz_bot: '1' } });
+    }
+
+    if (source) {
+      markOutgoing(fullMsg.key.id, source);
+    }
+
+    await sock.relayMessage(jid, fullMsg.message, {
+      messageId: fullMsg.key.id,
+      additionalNodes,
+    });
+    res.json({ status: 'sent' });
+  } catch (err) {
+    console.error(`[send-list] Error for ${req.params.customerId}:`, err.message);
+    res.status(500).json({ error: 'Failed to send list message' });
+  }
+});
+
 // DELETE /session/:customerId
 router.delete('/session/:customerId', async (req, res) => {
   try {

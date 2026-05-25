@@ -172,7 +172,64 @@ Each button: `{ "buttonId": "unique-id", "buttonText": "Label (max 25 chars)" }`
 
 ---
 
-### 6. Delete/Disconnect Session
+### 6. Send Interactive List
+
+```
+POST /api/session/send-list/:customerId
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "to": "63XXXXXXXXXX",
+  "body": "Pick a service:",
+  "buttonText": "View options",
+  "header": "Our menu",
+  "footer": "Tap to choose",
+  "sections": [
+    {
+      "title": "Drinks",
+      "rows": [
+        { "rowId": "d1", "title": "Coffee", "description": "Hot brewed" },
+        { "rowId": "d2", "title": "Tea" }
+      ]
+    },
+    {
+      "title": "Food",
+      "rows": [
+        { "rowId": "f1", "title": "Sandwich" }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `to` | string | Yes | Phone number |
+| `body` | string | Yes | Message text shown above the list button |
+| `buttonText` | string | Yes | Label on the button that opens the list sheet |
+| `sections` | array | Yes | 1-10 sections |
+| `header` | string | No | Title above body |
+| `footer` | string | No | Footer below button |
+| `source` | string | No | Free-form tag echoed back on the matching outgoing webhook payload |
+
+Each section: `{ "title": "...", "rows": [...] }` — 1-10 rows per section.
+Each row: `{ "rowId": "unique-id", "title": "Label", "description": "Optional subtitle" }`
+
+**Response:**
+```json
+{
+  "status": "sent"
+}
+```
+
+> Note: Maximum 10 sections, 10 rows per section (Baileys / WhatsApp hard limit). When the user taps a row, WhatsApp delivers a regular incoming text message containing the row's `title` — handled by the existing text webhook (no separate list-response payload).
+
+---
+
+### 7. Delete/Disconnect Session
 
 ```
 DELETE /api/session/:customerId
@@ -187,7 +244,7 @@ DELETE /api/session/:customerId
 
 ---
 
-### 7. Health Check (no auth needed)
+### 8. Health Check (no auth needed)
 
 ```
 GET /health
