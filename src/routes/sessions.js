@@ -255,12 +255,22 @@ router.post('/session/send-list/:customerId', async (req, res) => {
       return res.status(400).json({ error: `Session not connected (status: ${session.status})` });
     }
 
+    const wireSections = sections.map((section) => ({
+      title: section.title,
+      rows: section.rows.map((row) => ({
+        header: '',
+        title: row.title,
+        description: row.description || '',
+        id: row.rowId,
+      })),
+    }));
+
     const nativeButtons = [
       {
         name: 'single_select',
         buttonParamsJson: JSON.stringify({
           title: buttonText,
-          sections,
+          sections: wireSections,
         }),
       },
     ];
