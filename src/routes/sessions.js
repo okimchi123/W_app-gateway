@@ -13,6 +13,7 @@ const {
   generateMessageIDV2,
 } = require('@whiskeysockets/baileys');
 const { markOutgoing } = require('../utils/outgoingSourceTracker');
+const { getMessages } = require('../sessions/messageStore');
 
 function getUserJid(socket) {
   return socket?.authState?.creds?.me?.id || socket?.user?.id;
@@ -48,6 +49,38 @@ router.get('/session/status/:customerId', (req, res) => {
   } catch (err) {
     console.error(`[status] Error for ${req.params.customerId}:`, err.message);
     res.status(500).json({ error: 'Failed to get session status' });
+  }
+});
+
+// GET /session/messages/:customerId?contact=<digits>&limit=<n>&type=person|group
+router.get('/session/messages/:customerId', async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { contact, limit, type } = req.query;
+
+    if (!contact) {
+      return res.status(400).json({ error: 'Missing "contact" query param' });
+    }
+
+    const digits = String(contact).replace(/\D/g, '');
+    const jid = type === 'group' ? `${digits}@g.us` : `${digits}@s.whatsapp.net`;
+
+    let cap = parseInt(limit, 10);
+    if (!Number.isFinite(cap) || cap <= 0) cap = 20;
+    if (cap > 100) cap = 100;
+
+    const messages = await getMessages(customerId, jid, cap);
+
+    res.json({
+      ok: true,
+      customerId,
+      contact: digits,
+      count: messages.length,
+      messages,
+    });
+  } catch (err) {
+    console.error(`[messages] Error for ${req.params.customerId}:`, err.message);
+    res.status(500).json({ error: 'Failed to read messages' });
   }
 });
 
