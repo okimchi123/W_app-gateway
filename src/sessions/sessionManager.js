@@ -3,6 +3,12 @@ const qrcode = require('qrcode');
 const pino = require('pino');
 const { handleMessage } = require('../handlers/messageHandler');
 const { loadChats, recordHistorySyncMessages, clearChats } = require('./chatStore');
+const {
+  loadMessages,
+  recordHistoryMessages,
+  recordLiveMessages,
+  clearMessages,
+} = require('./messageStore');
 
 const STORAGE_DIR = path.join(__dirname, '..', '..', 'storage');
 const logger = pino({ level: 'warn' });
@@ -34,6 +40,7 @@ async function startSession(customerId) {
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
 
   await loadChats(customerId);
+  await loadMessages(customerId);
 
   const { version } = await fetchLatestWaWebVersion();
   console.log(`[${customerId}] Using WA web version: ${version}`);
@@ -55,10 +62,12 @@ async function startSession(customerId) {
 
     socket.ev.on('messaging-history.set', ({ messages }) => {
       recordHistorySyncMessages(customerId, messages || []);
+      recordHistoryMessages(customerId, messages || []);
     });
 
     socket.ev.on('messages.upsert', (upsert) => {
       handleMessage(customerId, upsert, socket);
+      recordLiveMessages(customerId, upsert.messages || []);
     });
 
     socket.ev.on('connection.update', async (update) => {
@@ -96,6 +105,7 @@ async function startSession(customerId) {
         if (loggedOut) {
           sessions.delete(customerId);
           await clearChats(customerId);
+          await clearMessages(customerId);
           const fs = require('fs/promises');
           await fs.rm(authDir, { recursive: true, force: true }).catch(() => {});
           session.status = 'logged_out';
@@ -173,6 +183,7 @@ async function deleteSession(customerId) {
 
   sessions.delete(customerId);
   await clearChats(customerId);
+  await clearMessages(customerId);
 
   const fs = require('fs/promises');
   const authDir = path.join(STORAGE_DIR, customerId);
