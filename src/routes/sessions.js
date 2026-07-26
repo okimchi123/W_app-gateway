@@ -36,6 +36,14 @@ router.post('/session/start/:customerId', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error(`[start] Error for ${req.params.customerId}:`, err.message);
+
+    if (err.code === 'SESSION_START_TIMEOUT') {
+      return res.status(504).json({
+        error: 'WhatsApp did not respond in time; no QR was produced',
+        code: 'SESSION_START_TIMEOUT',
+      });
+    }
+
     res.status(500).json({ error: 'Failed to start session' });
   }
 });
