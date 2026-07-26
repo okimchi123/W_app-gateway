@@ -17,6 +17,7 @@ const logger = pino({ level: 'warn' });
 // error from us instead of a 504 from nginx.
 const START_TIMEOUT_MS = Number(process.env.SESSION_START_TIMEOUT_MS) || 45000;
 const VERSION_FETCH_TIMEOUT_MS = Number(process.env.WA_VERSION_FETCH_TIMEOUT_MS) || 10000;
+const VERSION_CACHE_TTL_MS = Number(process.env.WA_VERSION_CACHE_TTL_MS) || 12 * 60 * 60 * 1000;
 
 // In-memory store of active sessions
 // Map<customerId, { socket, status, qr }>
@@ -49,22 +50,73 @@ function closeSocket(socket) {
   }
 }
 
-// fetchLatestWaWebVersion() hits https://web.whatsapp.com/sw.js with no timeout
-// of its own. If WhatsApp stalls that request, startSession never even reaches
-// socket creation. Bound it and fall back to the version bundled with Baileys.
-async function resolveWaVersion(customerId) {
-  const { fetchLatestWaWebVersion } = await loadBaileys();
+// fetchLatestWaWebVersion() hits https://web.whatsapp.com/sw.js, which has no
+// timeout of its own and was previously called on *every* startSession. With
+// reconnect storms that meant millions of requests to one endpoint, and
+// WhatsApp answered 429 for hours. Cache the result on disk instead: the WA web
+// version changes maybe daily, so one lookup per TTL is plenty.
+const VERSION_CACHE_PATH = path.join(STORAGE_DIR, '.wa-version.json');
+let versionFetchInFlight = null;
+
+async function readVersionCache() {
   try {
-    const { version, isLatest, error } = await fetchLatestWaWebVersion({
+    const raw = await require('fs/promises').readFile(VERSION_CACHE_PATH, 'utf8');
+    const cached = JSON.parse(raw);
+    if (Array.isArray(cached?.version) && Number.isFinite(cached?.fetchedAt)) return cached;
+  } catch {
+    // no cache yet, or unreadable — treat as a miss
+  }
+  return null;
+}
+
+async function writeVersionCache(version) {
+  const fsp = require('fs/promises');
+  try {
+    await fsp.mkdir(STORAGE_DIR, { recursive: true });
+    await fsp.writeFile(VERSION_CACHE_PATH, JSON.stringify({ version, fetchedAt: Date.now() }));
+  } catch (err) {
+    console.warn(`WA version cache write failed: ${err.message}`);
+  }
+}
+
+async function fetchVersionOnce() {
+  // Collapse concurrent lookups (restoreSessions starts several customers).
+  if (versionFetchInFlight) return versionFetchInFlight;
+
+  versionFetchInFlight = (async () => {
+    const { fetchLatestWaWebVersion } = await loadBaileys();
+    // NB: this helper swallows its own errors and returns Baileys' bundled
+    // constant with `error` set — so only a clean result is worth caching.
+    const { version, error } = await fetchLatestWaWebVersion({
       signal: AbortSignal.timeout(VERSION_FETCH_TIMEOUT_MS),
     });
-    if (error) {
-      console.warn(`[${customerId}] WA version lookup fell back to bundled version:`, error.message || error);
-    }
-    return { version, isLatest };
+    if (error) throw new Error(error.message || String(error));
+    return version;
+  })().finally(() => {
+    versionFetchInFlight = null;
+  });
+
+  return versionFetchInFlight;
+}
+
+async function resolveWaVersion(customerId) {
+  const cached = await readVersionCache();
+  if (cached && Date.now() - cached.fetchedAt < VERSION_CACHE_TTL_MS) {
+    return { version: cached.version, cached: true };
+  }
+
+  try {
+    const version = await fetchVersionOnce();
+    await writeVersionCache(version);
+    return { version, cached: false };
   } catch (err) {
+    if (cached) {
+      const ageHours = Math.round((Date.now() - cached.fetchedAt) / 3600000);
+      console.warn(`[${customerId}] WA version lookup failed (${err.message}); reusing ${ageHours}h-old cached version`);
+      return { version: cached.version, cached: true };
+    }
     console.warn(`[${customerId}] WA version lookup failed (${err.message}); using bundled version`);
-    return { version: null, isLatest: false };
+    return { version: null, cached: false };
   }
 }
 
@@ -101,8 +153,11 @@ async function startSessionInner(customerId) {
   await loadChats(customerId);
   await loadMessages(customerId);
 
-  const { version } = await resolveWaVersion(customerId);
-  console.log(`[${customerId}] Using WA web version: ${version || 'bundled default'}`);
+  const { version, cached } = await resolveWaVersion(customerId);
+  console.log(
+    `[${customerId}] Using WA web version: ${version ? version.join('.') : 'bundled default'}`
+    + `${cached ? ' (cached)' : ''}`
+  );
 
   const socketConfig = {
     auth: state,
